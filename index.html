@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>The Three Fish — Underwater Story</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html,body { margin:0; width:100%; height:100%; overflow:hidden; background:#0b9ec3; font-family: "Trebuchet MS", Arial, sans-serif; }
+  canvas { display:block; }
+  #ui { position:fixed; z-index:5; inset:0; pointer-events:none; }
+  /* Removed the top-left title and scene label completely. */
+  #caption { position:absolute; left:50%; transform:translateX(-50%); bottom:84px; width:min(700px,88vw); text-align:center; color:#fff8df; font-size:17px; line-height:1.4; background:rgba(3,46,69,.55); border:1px solid rgba(255,255,255,.2); padding:12px 18px; border-radius:18px; text-shadow:0 2px 5px rgba(0,0,0,.35); }
+  #controls { position:fixed; z-index:6; bottom:18px; left:50%; transform:translateX(-50%); display:flex; flex-wrap:wrap; justify-content:center; gap:9px; width:min(94vw,650px); }
+  button { border:1px solid rgba(255,255,255,.5); border-radius:999px; padding:11px 17px; background:rgba(240,252,255,.93); color:#07506a; font-weight:800; font-size:13px; cursor:pointer; box-shadow:0 5px 18px rgba(0,28,48,.18); transition:transform .18s,background .18s; }
+  button:hover { transform:translateY(-2px); background:#fff; }
+  #time { position:fixed; z-index:6; right:16px; top:16px; color:#fff; background:rgba(4,55,77,.5); padding:8px 12px; border-radius:12px; font-size:12px; pointer-events:none; }
+  @media(max-width:520px){ #caption{font-size:14px;bottom:104px} button{padding:10px 12px;font-size:12px} }
+</style>
+</head>
+<body>
+<div id="ui">
+  <div id="caption">أهلاً بيك في حكاية السمكات الثلاث 🐠 اضغط تشغيل عشان تبدأ القصة.</div>
+</div>
+<div id="time">0:00 / 1:46</div>
+<div id="controls">
+  <button id="prev">◀ السابق</button>
+  <button id="play">▶ تشغيل القصة</button>
+  <button id="next">التالي ▶</button>
+  <button id="restart">↻ من الأول</button>
+</div>
+<audio id="narration" preload="auto" src="1220.mp3"></audio>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+const audio=document.getElementById('narration');
+const caption=document.getElementById('caption');
+const timeLabel=document.getElementById('time');
+const playBtn=document.getElementById('play');
+const STORY=[
+ {text:"تحت البحر الجميل، عايشين السمكات الثلاث في عالم مليان ألوان وحياة.",cam:[0,3,14]},
+ {text:"الأم بتنصح أولادها وبتحاول تحميهم من أي خطر.",cam:[0,4,13]},
+ {text:"السمكات الصغيرة بتسبح وتستكشف أماكن جديدة في البحر.",cam:[0,2,11]},
+ {text:"فجأة، بتقابل السمكات موقف صعب ولازم تاخد بالها.",cam:[3,3,11]},
+ {text:"كل واحدة بتفكر إزاي تتصرف وتتعلم من اللي حصل.",cam:[-2,3,12]},
+ {text:"العبرة: نسمع نصيحة أهلنا لأنهم بيحبونا وعايزين يحمونا ❤️",cam:[0,4,14]}
+];
+let current=0;
+const durationGuess=106.368;
+const SEG=durationGuess/STORY.length;
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x52c7e8);
+scene.fog=new THREE.Fog(0x52c7e8,18,48);
+const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,.1,100);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.15;
+document.body.appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xcaf8ff,0x0b6174,2.6));
+const sun=new THREE.DirectionalLight(0xfff4ce,2.2); sun.position.set(-5,10,8); scene.add(sun);
+const fill=new THREE.PointLight(0x54ddff,1.2,35); fill.position.set(4,3,5); scene.add(fill);
+
+// Bright ocean floor and layered sea background
+const seabed=new THREE.Mesh(new THREE.PlaneGeometry(100,70),new THREE.MeshStandardMaterial({color:0xe6cf8d,roughness:1}));
+seabed.rotation.x=-Math.PI/2; seabed.position.y=-3.2; scene.add(seabed);
+const sandPatches=[];
+for(let i=0;i<24;i++){
+ const p=new THREE.Mesh(new THREE.CircleGeometry(.35+Math.random()*.7,16),new THREE.MeshStandardMaterial({color:[0xffe7a3,0xd7b975,0xf4dfa1][i%3],roughness:1}));
+ p.rotation.x=-Math.PI/2;p.position.set((Math.random()-.5)*34,-3.16,(Math.random()-.5)*18);scene.add(p);
+}
+const sunRays=new THREE.Group();
+for(let i=0;i<9;i++){
+ const ray=new THREE.Mesh(new THREE.PlaneGeometry(.22,15),new THREE.MeshBasicMaterial({color:0xeaffff,transparent:true,opacity:.09,side:THREE.DoubleSide}));
+ ray.position.set(-8+i*2,2,-7);ray.rotation.z=.14;sunRays.add(ray);
+} scene.add(sunRays);
+
+function fish(color,size=1,accent=0xffffff){
+ const g=new THREE.Group();
+ const mat=new THREE.MeshStandardMaterial({color,roughness:.42,metalness:.02});
+ const body=new THREE.Mesh(new THREE.SphereGeometry(size,24,18),mat);body.scale.set(1.45,.78,.65);g.add(body);
+ const tail=new THREE.Mesh(new THREE.BufferGeometry(),mat);
+ // triangle tail shape
+ const shape=new THREE.Shape();shape.moveTo(0,0);shape.lineTo(-size*1.1,size*.75);shape.lineTo(-size*1.1,-size*.75);shape.closePath();
+ const tailMesh=new THREE.Mesh(new THREE.ShapeGeometry(shape),mat);tailMesh.position.x=-size*1.28;tailMesh.position.z=0;g.add(tailMesh);
+ const finmat=new THREE.MeshStandardMaterial({color:accent,roughness:.55});
+ const fin=new THREE.Mesh(new THREE.ConeGeometry(size*.32,size*.65,3),finmat);fin.rotation.z=Math.PI/2;fin.position.set(-.05,-size*.45,0);g.add(fin);
+ const eyeWhite=new THREE.MeshStandardMaterial({color:0xffffff});
+ const eye=new THREE.Mesh(new THREE.SphereGeometry(size*.16,14,10),eyeWhite);eye.position.set(size*.86,size*.23,size*.53);g.add(eye);
+ const pupil=new THREE.Mesh(new THREE.SphereGeometry(size*.085,12,8),new THREE.MeshStandardMaterial({color:0x102c3a}));pupil.position.set(size*.91,size*.23,size*.66);g.add(pupil);
+ const eye2=eye.clone();eye2.position.z=-size*.53;g.add(eye2);
+ const pupil2=pupil.clone();pupil2.position.z=-size*.66;g.add(pupil2);
+ return g;
+}
+const fish1=fish(0xff914d,1.0,0xffd36b), fish2=fish(0xffd447,.88,0xfff0a6), fish3=fish(0xff6b9d,.82,0xffc3d7), mother=fish(0x8d79ff,1.25,0xd5caff);
+fish1.position.set(-4,1,0);fish2.position.set(0,.2,0);fish3.position.set(4,1,-.3);mother.position.set(0,-1.2,-1.5);scene.add(fish1,fish2,fish3,mother);
+
+// Coral clusters, sea plants, rocks and shells
+const seaObjects=[];
+function coral(x,z,scale=1,color=0xff7f7f){
+ const g=new THREE.Group();const material=new THREE.MeshStandardMaterial({color,roughness:.8});
+ for(let j=0;j<5;j++){
+  const h=(.55+Math.random()*1.2)*scale;
+  const stem=new THREE.Mesh(new THREE.CylinderGeometry(.09*scale,.15*scale,h,7),material);
+  stem.position.set((j-2)*.22*scale,h/2-3,z*.02);g.add(stem);
+  const bulb=new THREE.Mesh(new THREE.SphereGeometry(.13*scale,8,8),material);bulb.position.set((j-2)*.22*scale,h-3,z*.02);g.add(bulb);
+ }
+ g.position.set(x,0,z);scene.add(g);seaObjects.push(g);
+}
+function plant(x,z,h,color=0x20b77a){
+ const g=new THREE.Group();
+ for(let j=0;j<4;j++){
+  const curve=new THREE.Mesh(new THREE.CylinderGeometry(.045,.09,h*(.7+Math.random()*.4),7),new THREE.MeshStandardMaterial({color}));
+  curve.position.set((j-1.5)*.16,h*.35-3,0);curve.rotation.z=(j-1.5)*.13;g.add(curve);
+ }
+ g.position.set(x,0,z);scene.add(g);seaObjects.push(g);
+}
+for(let i=0;i<16;i++){
+ const x=-15+i*2;
+ plant(x, -3+(i%3)*.5,1.2+Math.random()*2,[0x19a86f,0x2bc48a,0x188e83][i%3]);
+}
+coral(-10,-1,1.1,0xff766f);coral(10,-1,1.2,0xffb04a);coral(-7,-2,.8,0xa978ed);coral(7,-2,.9,0xff6cae);
+function rock(x,z,s,color=0x5e8791){
+ const m=new THREE.Mesh(new THREE.DodecahedronGeometry(s,0),new THREE.MeshStandardMaterial({color,roughness:1}));
+ m.position.set(x,-2.8+s*.25,z);m.scale.y=.5;scene.add(m);
+}
+for(let i=0;i<18;i++)rock(-16+Math.random()*32,-5+Math.random()*7,.25+Math.random()*.6,[0x638b94,0x739aa0,0x9baaa1][i%3]);
+function shell(x,z,color){
+ const s=new THREE.Mesh(new THREE.SphereGeometry(.25,12,8),new THREE.MeshStandardMaterial({color,roughness:.5}));
+ s.scale.set(1,.45,.7);s.position.set(x,-2.85,z);scene.add(s);
+}
+for(let i=0;i<10;i++)shell(-13+i*2.7,-4+Math.random()*3,[0xffd5a6,0xf8e8d0,0xff9f9f][i%3]);
+
+// Friendly turtle and tiny crabs for more life
+const turtle=new THREE.Group();
+const shellMesh=new THREE.Mesh(new THREE.SphereGeometry(.62,16,12),new THREE.MeshStandardMaterial({color:0x2c936d,roughness:.7}));shellMesh.scale.set(1.25,.6,1);turtle.add(shellMesh);
+const head=new THREE.Mesh(new THREE.SphereGeometry(.27,12,10),new THREE.MeshStandardMaterial({color:0x71c98a}));head.position.set(.75,.05,0);turtle.add(head);
+for(const x of [-.35,.35])for(const z of [-.45,.45]){const leg=new THREE.Mesh(new THREE.SphereGeometry(.16,10,8),new THREE.MeshStandardMaterial({color:0x71c98a}));leg.position.set(x,-.2,z);turtle.add(leg);}
+turtle.position.set(-7,2,-3);scene.add(turtle);
+const crab=new THREE.Group();const crabMat=new THREE.MeshStandardMaterial({color:0xff704b});
+const crabBody=new THREE.Mesh(new THREE.SphereGeometry(.35,12,8),crabMat);crabBody.scale.set(1.3,.65,.7);crab.add(crabBody);
+for(let i=0;i<4;i++){const leg=new THREE.Mesh(new THREE.CylinderGeometry(.035,.05,.5,6),crabMat);leg.rotation.z=(i<2?-.7:.7);leg.position.set((i%2?-.3:.3),-.25,(i-1.5)*.15);crab.add(leg);}
+crab.position.set(9,-2.4,1);scene.add(crab);
+
+// Schools of small fish in the background
+const minis=[];
+for(let i=0;i<12;i++){
+ const m=fish([0x65e6e1,0xffc86b,0xb6a0ff][i%3],.17,[0xffffff,0xffe7a1,0xe2ddff][i%3]);
+ m.position.set(-12+Math.random()*24,1+Math.random()*4,-4-Math.random()*4);m.userData.baseY=m.position.y;m.userData.phase=Math.random()*6;scene.add(m);minis.push(m);
+}
+const bubbles=[];
+for(let i=0;i<70;i++){
+ const b=new THREE.Mesh(new THREE.SphereGeometry(.035+Math.random()*.065,8,8),new THREE.MeshBasicMaterial({color:0xd9fbff,transparent:true,opacity:.55}));
+ b.position.set((Math.random()-.5)*30,-2.8+Math.random()*10,(Math.random()-.5)*10);b.userData.speed=.006+Math.random()*.014;b.userData.phase=Math.random()*6;scene.add(b);bubbles.push(b);
+}
+
+camera.position.set(0,3,14);
+function setScene(i){
+ current=(i+STORY.length)%STORY.length;
+ caption.textContent=STORY[current].text;
+ camera.position.set(...STORY[current].cam);
+ if(current===0){fish1.position.set(-4,1,0);fish2.position.set(0,.2,0);fish3.position.set(4,1,-.3);mother.position.set(0,-1.2,-1.5);}
+ if(current===1){mother.position.set(0,-.2,-1);fish1.position.set(-3,.8,0);fish2.position.set(0,.8,0);fish3.position.set(3,.8,0);}
+ if(current===2){fish1.position.set(-5,1,0);fish2.position.set(0,2,-1);fish3.position.set(5,.2,0);}
+ if(current===3){fish1.position.set(-2,1,1);fish2.position.set(2,0,0);fish3.position.set(4,-1,-1);turtle.position.set(0,2,-2);}
+ if(current===4){fish1.position.set(-3,1,0);fish2.position.set(0,1,0);fish3.position.set(3,1,0);}
+ if(current===5){fish1.position.set(-3,1,0);fish2.position.set(0,1,0);fish3.position.set(3,1,0);mother.position.set(0,-.3,-1);}
+}
+function fmt(t){const m=Math.floor(t/60),s=Math.floor(t%60);return `${m}:${String(s).padStart(2,'0')}`;}
+audio.addEventListener('timeupdate',()=>{
+ const t=audio.currentTime, idx=Math.min(STORY.length-1,Math.floor(t/SEG));
+ if(idx!==current)setScene(idx);
+ timeLabel.textContent=`${fmt(t)} / ${fmt(audio.duration||durationGuess)}`;
+});
+audio.addEventListener('ended',()=>{playBtn.textContent="▶ تشغيل القصة";});
+playBtn.onclick=()=>{if(audio.paused){audio.play();playBtn.textContent="⏸ إيقاف مؤقت";}else{audio.pause();playBtn.textContent="▶ تشغيل القصة";}};
+document.getElementById('next').onclick=()=>{setScene(current+1);audio.currentTime=Math.min((audio.duration||durationGuess)-.1,current*SEG);};
+document.getElementById('prev').onclick=()=>{setScene(current-1);audio.currentTime=Math.max(0,current*SEG);};
+document.getElementById('restart').onclick=()=>{setScene(0);audio.currentTime=0;audio.play();playBtn.textContent="⏸ إيقاف مؤقت";};
+renderer.domElement.addEventListener('click',e=>{
+ const mouse=new THREE.Vector2(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1);
+ const ray=new THREE.Raycaster();ray.setFromCamera(mouse,camera);
+ const hits=ray.intersectObjects([fish1,fish2,fish3,mother,turtle,crab],true);
+ if(hits.length){caption.textContent="🐠 حلو! تابع الحكاية مع السمكات واكتشف هيحصل إيه بعد كده."; }
+});
+const clock=new THREE.Clock();
+function animate(){
+ requestAnimationFrame(animate);const t=clock.getElapsedTime();
+ [fish1,fish2,fish3,mother].forEach((f,i)=>{f.position.y+=Math.sin(t*1.7+i)*.0025;f.rotation.y=Math.sin(t*.7+i)*.08;const tail=f.children[1];if(tail)tail.rotation.y=Math.sin(t*5+i)*.18;});
+ minis.forEach((m,i)=>{m.position.x+=Math.sin(t*.7+i)*.0015;m.position.y=m.userData.baseY+Math.sin(t*2+m.userData.phase)*.13;});
+ bubbles.forEach(b=>{b.position.y+=b.userData.speed;if(b.position.y>7)b.position.y=-3;b.position.x+=Math.sin(t+b.userData.phase)*.0015;});
+ turtle.position.x=-7+Math.sin(t*.35)*2.3;turtle.position.y=2+Math.sin(t*1.2)*.18;
+ crab.position.x=9+Math.sin(t*.6)*.6;
+ sunRays.rotation.y=Math.sin(t*.2)*.025;
+ seaObjects.forEach((o,i)=>{o.rotation.z=Math.sin(t*.7+i)*.025;});
+ renderer.render(scene,camera);
+}
+animate();
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+setScene(0);
+</script>
+</body>
+</html>
